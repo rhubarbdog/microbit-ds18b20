@@ -4,7 +4,10 @@ This is a class for the dallas ds18b20 thermometer it has the following methods.
 
 <table>
 <tr><td>
-`read` </td><td>has a single the argument, it can be  READ_SCRATCH, SEARCH_ROM, ALARM_SEARCH or READ_ROM. on success 8 or 9 bytes of data is returned. if there is no data `None` will be returned for SEARCH commands, but will raise an exception for READ_SCRATCH and READ_ROM. Only use READ_ROM  if there is one sensor on the wire,=. With a sucessful read the ROM code of the sensor will be returned. If there a multiple sensors when using READ_ROM they all will respond causing a data  collision on the wire. Using the SEARCH_ROM or ALARM_SEARCH argument has to be done in a loop until no sensor responds and `None` is returned. READ_SCRATCH retrieves the scratchpad for further processing with the `temperature` or `scratch_data` methods
+`read` </td><td>has a single the argument, it can be  `READ_SCRATCH`, `SEARCH_ROM`, `ALARM_SEARCH` or `READ_ROM`. on success 8 or 9 bytes of data is returned. If there is no data `None` will be returned for SEARCH commands, but will raise an exception for `READ_SCRATCH` and `READ_ROM`.
+Only use `READ_ROM`  if there is *ONLY* one sensor on the wire. If there a multiple sensors when using `READ_ROM` they all will respond causing a data  collision on the wire. With a sucessful read the ROM code of the sensor will be returned.
+Using the `SEARCH_ROM` or `ALARM_SEARCH` argument has to be done in a loop until no sensor responds and `None` is returned.
+`READ_SCRATCH` retrieves the scratchpad for further processing with the `temperature` or `scratch_data` methods
 </td></tr>
 
 <tr><td>
@@ -40,7 +43,7 @@ These methods have no arguments.
 </td></tr>
 
 <tr><td>
-`convert_wait` /td><td>use this method imediately after the `convert` method to pause processing until the ds18b20 is ready for the next operation
+`convert_wait` </td><td>use this method imediately after the `convert` method to pause processing until the ds18b20 is ready for the next operation
 </td></tr>
 
 <tr><td>
@@ -48,7 +51,7 @@ These methods have no arguments.
 </td></tr>
 
 <tr><td>
-`copy_to_eprom` </td><td>copies the tH and Tl registers and the control byte which stores the number of bits of precission to calculate temperatures to.
+`copy_to_eprom` </td><td>copies the tH and tL registers and the control byte which stores the number of bits of precission to calculate temperatures to.
 </td></tr>
 
 <tr><td>

@@ -13,11 +13,15 @@ class DataError(Exception):
     pass
 
 class DS18B20:
+    #write modes
+    WRITE_SCRATCH = 0xbe
     MATCH_ROM = 0x55
+
+    #general commands
     CONVERT = 0x44
     SKIP_ROM = 0xcc
-    WRITE_SCRATCH = 0xbe
     POWER_SUPPLY = 0xb4
+
     RECALL_EPROM = 0xb8
     STORE_EPROM = 0x48
     #read modes
@@ -231,27 +235,27 @@ class DS18B20:
                 
         return data
 
-    def _xor(a, b):
+    def _xor(self, a, b):
         return (a or b) and not (a and b)
     
     def _calc_checksum(self, buffer_):
-        crc_data = bytes(1)
+        crc_data = 0
 
         for data in buffer_:
             for b in range(8):
-
-                input_ = xor(crc_data & 0x1 , data & 0x1)                
+                
+                input_ = self._xor(crc_data & 0x1 , data & 0x1)
                 crc_data = crc_data >> 1
                 
                 if input_:
                     crc_data |= 0x80
 
-                if xor(crc_data & 0x10, input_):
+                if self._xor(crc_data & 0x10, input_):
                     crc_data |= 0x8
                 else:
                     crc_data &= 0xf7
                     
-                if xor(crc_data & 0x8, input_):
+                if self._xor(crc_data & 0x8, input_):
                     crc_data |= 0x4
                 else:
                     crc_data &= 0xfb
@@ -623,7 +627,13 @@ if __name__ == '__main__':
         bytes_[1] = msb[i]
         bytes_[0] = lsb[i]
         print(sensor.temperature(bytes_))
+
+    b=bytearray(5)
+    for i in range(len(b)):
+        b[i] = 0xf
         
+    print(sensor._calc_checksum(b))
+    
     #sensor.reset()
     sensor.skip_rom()
     sensor.convert()
@@ -631,3 +641,4 @@ if __name__ == '__main__':
     sensor.skip_rom()
     data = sensor.read(sensor.READ_SCRATCH)
     print(sensor.temperature(data))
+    print(sensor._calc_checksum(b'\x0f\x0f\x0f'))
