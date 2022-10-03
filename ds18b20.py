@@ -1,7 +1,7 @@
 #
-# dht11.py - a microbit implementation of dht11
-# author - Phil Hall, copyright (c) November 2018
-\#
+# ds18b20.py - a microbit implementation of ds18b20
+# author - Phil Hall, copyright (c) November 2022
+#
 # License - MIT
 
 from microbit import *
@@ -16,10 +16,15 @@ class DS18B20:
     MATCH_ROM = 0x55
     CONVERT = 0x44
     SKIP_ROM = 0xcc
+    WRITE_SCRATCH = 0xbe
+    POWER_SUPPLY = 0xb4
+    RECALL_EPROM = 0xb8
+    STORE_EPROM = 0x48
     #read modes
     READ_SCRATCH = 0xbe
     SEARCH_ROM = 0xf0
     READ_ROM = 0x33
+    ALARM_SEARCH = 0xec
     
     def __init__(self, pin):
         self._pin = pin
@@ -45,86 +50,84 @@ class DS18B20:
         if id == -1 or self._read == -1 or self._write == -1:
             raise ValueError('function not suitable for this pin')
 
-    def string2bytes(self, string):
-        tmp = len(string)
-        bytes_ = bytearray(tmp)
-        for i in range(tmp):
-            if string[i] == "1":
-                bytes_[i] = 1
-            else:
-                bytes_[i] = 0
-
-        return bytes_
-
-    
-    def match_rom(self, rom_id):
-        pin=self._pin
-        pin.write_digital(1)
-        binstr = ""
-
-        for data in rom_id:
-            for b in range(8):
-                if data & 0x1:
-                    binstr += '1'
-                else:
-                    binstr += '0'
-                data >> 1
-                    
-        bytes1 = self.string2bytes(self.binary(self.MATCH_ROM, 8))
-        bytes2 = self.string2bytes(binstr)
+    def write_scratch(self, tH_register, tL_register, bits):
+        bytes_ = bytearray(3)
+        if tH_register < -128 or tH_register > 127 or \
+           tL_register < -128 or tL_register > 127 or \
+           bits < 9 or bits > 12:
+            raise ValueError('invalid value for write_scratch')
         
-        self.write_data(self._write, bytes1, len(bytes1))
-        self.write_data(self._write, bytes2, len(bytes2))
+        if tH_register < 0:
+            bytes_[0] = (128 + tH_register) | 0x80
+        else:
+            bytes_[0] = tH_register & 0x7f
+
+        if tL_register < 0:
+            bytes_[1] = (128 + tL_register) | 0x80
+        else:
+            bytes_[1] = tL_register & 0x7f
+
+        bytes_[2] = ((12 - bits) << 4) | 0xf
+        
+        self._command_plus(self.WRITE_SCRATCH, bytes_)
+
+    def scratch_data(self, scratch):
+
+        data_tH = scratch[2] & 0x7f
+        if scratch[2] & 0x80:
+            data_tH = 128 - data
+            data_tH = -data
+
+        data_tL = scratch[3] & 0x7f
+        if scratch[3] & 0x80:
+            data_tL = 128 - data
+            data_tL = -data
+
+        return (data_tH, data_tL, (scratch[4] >> 4) + 9)
+
+    def on_parasitic_power(self):
+        self._command(self.POWER_SUPPLY)
+
+        self._pin.set_pull(self._pin.PULL_UP)
+        return not self._pin.read_digital():
+                
+    def match_rom(self, rom_id):
+        self._command_plus(self.MATCH_ROM, rom_id)
         
     def skip_rom(self):
-        pin=self._pin
-        pin.write_digital(1)
-        bytes_ = self.string2bytes(self.binary(self.SKIP_ROM, 8))
+        self._command(self.SKIP_ROM)
         
-        self.write_data(self._write, bytes_, len(bytes_))
-
-        # when the pin goes high conver is over
-        pin.read_digital()
-        pin.set_pull(pin.PULL_UP)
-    
     def convert(self):
-        # pull wire low for atleast 480us then high
-        pin = self._pin
-        pin.write_digital(1)
-    
-        bytes_ = self.string2bytes(self.binary(self.CONVERT, 8))
-                
-        self.write_data(self._write, bytes_, len(bytes_))
+        self._command(self.CONVERT))
 
-        # when the pin goes high conver is over
-        pin.read_digital()
-        pin.set_pull(pin.PULL_UP)
+    def copy_to_eprom(self):
+        self._command(self.STORE_EPROM))
+
+    def cache_from_eprom(self):
+        self._command(self.RECALL_EPROM)
 
     def convert_wait(self):
-        pin.read_digital()
         pin.set_pull(pin.PULL_UP)
-        elapsed = self.wait_low(self._read)
-        print(elapsed)
+        pin.read_digital()
+        self.wait_low(self._read)
 
     def reset(self):
         # pull wire low for atleast 480us then high
         pin = self._pin
         pin.write_digital(1)
-        self.do_reset(self._write)
+        self._do_reset(self._write)
 
         time.sleep_us(15) # sleep 15 to 60
         
         # time response it should be 60 - 240us
-        pin.read_digital()
         pin.set_pull(pin.PULL_UP)
-        elapsed = self.wait_low(self._read)
+        pin.read_digital()
+        self._wait_low(self._read)
 
-
-    
     @staticmethod
     @micropython.asm_thumb
     #pin_id, data, bits
-    def write_data(r0,r1 ,r2):
+    def _write_data(r0,r1 ,r2):
         b(START)
         # these are sixteenths of a us in register r0
         label(SLEEP)
@@ -213,7 +216,7 @@ class DS18B20:
 
     @staticmethod
     @micropython.asm_thumb
-    def do_reset(r0):
+    def _do_reset(r0):
         b(START)
         
         # these are sixteenths of a us in register r0
@@ -261,7 +264,7 @@ class DS18B20:
 
     @staticmethod
     @micropython.asm_thumb
-    def wait_low(r0):
+    def _wait_low(r0):
         b(START)
 
         # these are sixteenths of a us in register r0
@@ -321,72 +324,7 @@ class DS18B20:
 
         label(END)
         mov(r0, r6)
-
-    def binary(self, value, bits):
-
-        save = bits-1
-        binstring = ""
-        while bits > 0:
-            bits -= 1
         
-            if value & (1<<(save-bits)):
-                binstring += "1"
-            else:
-                binstring += '0'
-
-        return binstring
-
-              
-    def read(self, command):
-        # creating these locals speeds things up len() is very slow
-        pin = self._pin
-        
-        buffer_ = bytearray(1024)
-        length = len(buffer_)
-
-        pin.write_digital(1)
-        bytes_ = self.string2bytes(self.binary(command, 8))
-        self.write_data(self._write, bytes_, len(bytes_))
-
-        pin.read_digital()
-        pin.set_pull(pin.PULL_UP)
-
-        if self._grab_bits(self._read, buffer_, length) != length:
-            raise Exception("Grab bits failed.")
-
-        for b in buffer_:
-            print(b, end = "")
-        print('')
-        
-        data = self._parse_data(buffer_)
-
-        del buffer_
-        
-        if data is None or len(data) != 40:
-            if data is None:
-                bits = 0
-            else:
-                bits = len(data)
-            raise DataError("Too many or too few bits " + str(bits))
-
-        data = self._calc_bytes(data)
-
-        if not command == self.READ_SCRATCH:
-            save = data[0]
-            data[0]=0
-        
-
-        checksum = self._calc_checksum(data)
-        if not command == self.READ_SCRATCH:
-            data[0] = save
-            
-        if ((command == self.READ_ROM or command == self.SEARCH_ROM) \
-            and not data[0] == checksum) or \
-            (command == self.READ_SCRATCH and not data[8] == checksum):
-            pass
-        
-        return data 
-
     # r0 - pin bit id
     # r1 - byte array
     # r2 - len byte array, must be a multiple of 4
@@ -449,6 +387,108 @@ class DS18B20:
         mov(r0, r5)       # return number of bytes written
         cpsie('i')         # enable interupst
 
+    def _command_plus(self, command, buffer_):
+        pin=self._pin
+        pin.write_digital(1)
+        binstr = ""
+
+        for data in buffer_:
+            for b in range(8):
+                if data & 0x1:
+                    binstr += '1'
+                else:
+                    binstr += '0'
+                data = data >> 1
+                    
+        bytes1 = self.string2bytes(self.binary(command, 8))
+        bytes2 = self.string2bytes(binstr)
+        
+        self.write_data(self._write, bytes1, len(bytes1))
+        self.write_data(self._write, bytes2, len(bytes2))
+        # when the pin goes high conver is over
+        pin.set_pull(pin.PULL_UP)
+        pin.read_digital()
+        
+    def _command(self, command):
+        pin=self._pin
+        pin.write_digital(1)
+        bytes_ = self._string2bytes(self._binary(command, 8))
+        
+        self._write_data(self._write, bytes_, len(bytes_))
+
+        # when the pin goes high conver is over
+        pin.set_pull(pin.PULL_UP)
+        pin.read_digital()
+    
+    def _string2bytes(self, string):
+        tmp = len(string)
+        bytes_ = bytearray(tmp)
+        for i in range(tmp):
+            if string[i] == "1":
+                bytes_[i] = 1
+            else:
+                bytes_[i] = 0
+
+        return bytes_
+
+    def _binary(self, value, bits):
+
+        save = bits-1
+        binstring = ""
+        while bits > 0:
+            bits -= 1
+        
+            if value & (1<<(save-bits)):
+                binstring += "1"
+            else:
+                binstring += '0'
+
+        return binstring
+
+              
+    def read(self, command):
+        # creating these locals speeds things up len() is very slow
+        pin = self._pin
+        
+        buffer_ = bytearray(1024)
+        length = len(buffer_)
+
+        pin.write_digital(1)
+        bytes_ = self._string2bytes(self._binary(command, 8))
+        self._write_data(self._write, bytes_, len(bytes_))
+
+        pin.set_pull(pin.PULL_UP)
+        pin.read_digital()
+
+        self._grab_bits(self._read, buffer_, length)
+
+        for b in buffer_:
+            print(b, end = "")
+        print('')
+        
+        data = self._parse_data(buffer_)
+
+        del buffer_
+        
+        data = self._calc_bytes(data)
+
+        if not command == self.READ_SCRATCH:
+            save = data[0]
+            data[0]=0
+        
+        checksum = self._calc_checksum(data[:8])
+        
+        print(checksum, self.binary(checksum, 8))
+        if not command == self.READ_SCRATCH:
+            data[0] = save
+            
+        if (command in (self.READ_ROM, self.SEARCH_ROM, self.SEARCH_ALARM) and\
+            not data[0] == checksum) or \
+            (command == self.READ_SCRATCH and not data[8] == checksum):
+            pass
+        
+        return data 
+
     def _parse_data(self, buffer_):
 
         max_bits = 128
@@ -497,7 +537,7 @@ class DS18B20:
         for i in range(len(data)):
             byte = byte << 1
             if pull_up_lengths[i] < halfway:
-                byte = byte | 1
+                byte |= 1
 
             if ((i + 1) % 8 == 0):
                 data[did] = byte
@@ -506,17 +546,95 @@ class DS18B20:
                 
         return data
 
-    def _calc_checksum(self, data):
-        return data[0] + data[1] + data[2] + data[3] & 0xff
+    def _xor(a, b):
+        return (a or b) and not (a and b)
+    
+    def _calc_checksum(self, buffer_):
+        crc_data = bytes(1)
+
+        for data in buffer_:
+            for b in range(8):
+                save = (crc_data & 0x1, crc_data & 0x10, crc_data & 0x8)
+                input_ = data & 0x1
+                if xor(save[0], input_):                
+                    input_ = 0x1
+                else:
+                    input_ = 0x0
+
+                if xor(input_, save[0])
+                crc_data = ((crc_data & 0xf0) >> 1) | \
+                    ((crc_data & 0b0111) >> 1)
+                
+                if input_:
+                    crc_data |= 0x80
+
+                if xor(save[2], input_):
+                    crc_data |= 0x4
+                else:
+                    crc_data &= 0xfb
+
+                if xor(save[1], input_):
+                    crc_data |= 0x8
+                else:
+                    crc_data &= 0xf7
+                    
+                if xor(save[2], input_):
+                    crc_data |= 0x4
+                else:
+                    crc_data &= 0xfb
+                    
+
+                data = data >> 1
+
+        return crc_data
+
+    def temperature(self, scratch):
+        
+        data = scratch[1] & 0b111
+        result = 0
+        
+        for i in range(3):
+            result = result << 1
+            if data & 0b100:
+                result |= 0x1
+            data = data << 1
+
+        data = scratch[0] >> 4
+        for i in range(4):
+            result = result << 1
+            if data & 0b1000:
+                result |= 0x1
+            data = data << 1
+
+        mask = 0b1000
+        for i in (.5, .25, .125, .0625):
+            if mask & scratch[0]:
+                result += i
+            mask = mask >> 1
+
+        if (scratch[1] & 0b11111000) > 0:
+            result = 128 - result
+            result = -result
+            
+        return result   
+
 
 
 if __name__ == '__main__':
 
     sensor = DS18B20(pin0)
-    sensor.reset()
+    msb = (0x07, 0x05, 0x01, 0, 0, 0, 0xff, 0xff, 0xfe, 0xfc)
+    lsb = (0xd0, 0x50, 0x91, 0xa2, 0x08, 0 , 0xf8, 0x5e, 0x6f, 0x90)
+    bytes_ = bytearray(2)
+    for i in range(len(msb)):
+        bytes_[1] = msb[i]
+        bytes_[0] = lsb[i]
+        print(sensor.temperature(bytes_))
+        
+    #sensor.reset()
     sensor.skip_rom()
     sensor.convert()
     sleep(1000)
+    sensor.skip_rom()
     data = sensor.read(sensor.READ_SCRATCH)
-    print(data)
-    
+    print(sensor.temperature(data))
