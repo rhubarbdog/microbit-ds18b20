@@ -554,36 +554,23 @@ class DS18B20:
 
         for data in buffer_:
             for b in range(8):
-                save = (crc_data & 0x1, crc_data & 0x10, crc_data & 0x8)
-                input_ = data & 0x1
-                if xor(save[0], input_):                
-                    input_ = 0x1
-                else:
-                    input_ = 0x0
 
-                if xor(input_, save[0])
-                crc_data = ((crc_data & 0xf0) >> 1) | \
-                    ((crc_data & 0b0111) >> 1)
+                input_ = xor(crc_data & 0x1 , data & 0x1)                
+                crc_data = crc_data >> 1
                 
                 if input_:
                     crc_data |= 0x80
 
-                if xor(save[2], input_):
-                    crc_data |= 0x4
-                else:
-                    crc_data &= 0xfb
-
-                if xor(save[1], input_):
+                if xor(crc_data & 0x10, input_):
                     crc_data |= 0x8
                 else:
                     crc_data &= 0xf7
                     
-                if xor(save[2], input_):
+                if xor(crc_data & 0x8, input_):
                     crc_data |= 0x4
                 else:
                     crc_data &= 0xfb
                     
-
                 data = data >> 1
 
         return crc_data
