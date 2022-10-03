@@ -89,7 +89,7 @@ class DS18B20:
         self._command(self.POWER_SUPPLY)
 
         self._pin.set_pull(self._pin.PULL_UP)
-        return not self._pin.read_digital():
+        return not self._pin.read_digital()
                 
     def match_rom(self, rom_id):
         self._command_plus(self.MATCH_ROM, rom_id)
@@ -98,10 +98,10 @@ class DS18B20:
         self._command(self.SKIP_ROM)
         
     def convert(self):
-        self._command(self.CONVERT))
+        self._command(self.CONVERT)
 
     def copy_to_eprom(self):
-        self._command(self.STORE_EPROM))
+        self._command(self.STORE_EPROM)
 
     def cache_from_eprom(self):
         self._command(self.RECALL_EPROM)
@@ -123,6 +123,142 @@ class DS18B20:
         pin.set_pull(pin.PULL_UP)
         pin.read_digital()
         self._wait_low(self._read)
+
+              
+    def read(self, command):
+        # creating these locals speeds things up len() is very slow
+        pin = self._pin
+        
+        buffer_ = bytearray(8 * 1024)
+        length = len(buffer_)
+
+        pin.write_digital(1)
+        bytes_ = self._string2bytes(self._binary(command, 8))
+        self._write_data(self._write, bytes_, len(bytes_))
+
+        pin.set_pull(pin.PULL_UP)
+        pin.read_digital()
+
+        self._grab_bits(self._read, buffer_, length)
+
+        data = self._parse_data(buffer_)
+
+        del buffer_
+
+        #no data to process
+        if data is None:
+            if command in (self.READ_SCRATCH, self.READ_ROM):
+                raise DataError('read sensor failed, no data')
+            return None
+        
+        for b in data:
+            print(b, end = " ")
+        print('')
+        
+        data = self._calc_bytes(data)
+
+        if not command == self.READ_SCRATCH:
+            save = data[0]
+            data[0]=0
+        
+        checksum = self._calc_checksum(data[:8])
+        
+        print(checksum, self.binary(checksum, 8))
+        if not command == self.READ_SCRATCH:
+            data[0] = save
+            
+        if (command in (self.READ_ROM, self.SEARCH_ROM, self.SEARCH_ALARM) and\
+            not data[0] == checksum) or \
+            (command == self.READ_SCRATCH and not data[8] == checksum):
+            pass
+        
+        return data 
+
+    def _parse_data(self, buffer_):
+
+        max_bits = 128
+        bits = bytearray(max_bits)
+        length = 0
+        bit_ = 0
+        
+        for current in buffer_:
+
+            if current == 0:
+                length += 1
+            elif bit_ == 0 and length == 0:
+                pass
+            elif bit_ >= max_bits:
+                pass  
+            elif length > 0:
+                bits[bit_] = length
+                length = 0
+                bit_ += 1
+                
+        if bit_ == 0:
+            return None
+        
+        results = bytearray(bit_)
+        for i in range(bit_):
+            results[i] = bits[i]
+        return results
+
+    def _calc_bytes(self, lengths):
+
+        shortest = 1 << 30
+        longest = 0
+
+        for i in range(0, len(lengths)):
+            len_ = lengths[i]
+            if len_ < shortest:
+                shortest = len_
+            if len_ > longest:
+                longest = len_
+
+        halfway = shortest + (longest - shortest) / 2
+        data = bytearray(len(lengths)//8)
+        did = 0
+        byte = 0
+
+        for i in range(len(data)):
+            byte = byte << 1
+            if pull_up_lengths[i] < halfway:
+                byte |= 1
+
+            if ((i + 1) % 8 == 0):
+                data[did] = byte
+                did += 1
+                byte = 0
+                
+        return data
+
+    def _xor(a, b):
+        return (a or b) and not (a and b)
+    
+    def _calc_checksum(self, buffer_):
+        crc_data = bytes(1)
+
+        for data in buffer_:
+            for b in range(8):
+
+                input_ = xor(crc_data & 0x1 , data & 0x1)                
+                crc_data = crc_data >> 1
+                
+                if input_:
+                    crc_data |= 0x80
+
+                if xor(crc_data & 0x10, input_):
+                    crc_data |= 0x8
+                else:
+                    crc_data &= 0xf7
+                    
+                if xor(crc_data & 0x8, input_):
+                    crc_data |= 0x4
+                else:
+                    crc_data &= 0xfb
+                    
+                data = data >> 1
+
+        return crc_data
 
     @staticmethod
     @micropython.asm_thumb
@@ -444,136 +580,6 @@ class DS18B20:
                 binstring += '0'
 
         return binstring
-
-              
-    def read(self, command):
-        # creating these locals speeds things up len() is very slow
-        pin = self._pin
-        
-        buffer_ = bytearray(1024)
-        length = len(buffer_)
-
-        pin.write_digital(1)
-        bytes_ = self._string2bytes(self._binary(command, 8))
-        self._write_data(self._write, bytes_, len(bytes_))
-
-        pin.set_pull(pin.PULL_UP)
-        pin.read_digital()
-
-        self._grab_bits(self._read, buffer_, length)
-
-        for b in buffer_:
-            print(b, end = "")
-        print('')
-        
-        data = self._parse_data(buffer_)
-
-        del buffer_
-        
-        data = self._calc_bytes(data)
-
-        if not command == self.READ_SCRATCH:
-            save = data[0]
-            data[0]=0
-        
-        checksum = self._calc_checksum(data[:8])
-        
-        print(checksum, self.binary(checksum, 8))
-        if not command == self.READ_SCRATCH:
-            data[0] = save
-            
-        if (command in (self.READ_ROM, self.SEARCH_ROM, self.SEARCH_ALARM) and\
-            not data[0] == checksum) or \
-            (command == self.READ_SCRATCH and not data[8] == checksum):
-            pass
-        
-        return data 
-
-    def _parse_data(self, buffer_):
-
-        max_bits = 128
-        bits = bytearray(max_bits)
-        length = 0
-        bit_ = 0
-        
-        for current in buffer_:
-
-            if current == 0:
-                length += 1
-            elif bit_ == 0 and length == 0:
-                pass
-            elif bit_ >= max_bits:
-                pass  
-            elif length > 0:
-                bits[bit_] = length
-                length = 0
-                bit_ += 1
-                
-        if bit_ == 0:
-            return None
-        
-        results = bytearray(bit_)
-        for i in range(bit_):
-            results[i] = bits[i]
-        return results
-
-    def _calc_bytes(self, lengths):
-
-        shortest = 1 << 30
-        longest = 0
-
-        for i in range(0, len(lengths)):
-            len_ = lengths[i]
-            if len_ < shortest:
-                shortest = len_
-            if len_ > longest:
-                longest = len_
-
-        halfway = shortest + (longest - shortest) / 2
-        data = bytearray(len(lengths)//8)
-        did = 0
-        byte = 0
-
-        for i in range(len(data)):
-            byte = byte << 1
-            if pull_up_lengths[i] < halfway:
-                byte |= 1
-
-            if ((i + 1) % 8 == 0):
-                data[did] = byte
-                did += 1
-                byte = 0
-                
-        return data
-
-    def _xor(a, b):
-        return (a or b) and not (a and b)
-    
-    def _calc_checksum(self, buffer_):
-        crc_data = bytes(1)
-
-        for data in buffer_:
-            for b in range(8):
-
-                input_ = xor(crc_data & 0x1 , data & 0x1)                
-                crc_data = crc_data >> 1
-                
-                if input_:
-                    crc_data |= 0x80
-
-                if xor(crc_data & 0x10, input_):
-                    crc_data |= 0x8
-                else:
-                    crc_data &= 0xf7
-                    
-                if xor(crc_data & 0x8, input_):
-                    crc_data |= 0x4
-                else:
-                    crc_data &= 0xfb
-                    
-                data = data >> 1
-
-        return crc_data
 
     def temperature(self, scratch):
         
